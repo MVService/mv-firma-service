@@ -7,6 +7,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: "10mb" }));
 
+// ================== ROTA /firma (MV normal) ==================
 app.post("/firma", (req, res) => {
   try {
     const { cerB64, keyB64, senha, cadenaOriginal } = req.body;
@@ -48,6 +49,7 @@ app.post("/firma", (req, res) => {
   }
 });
 
+// ================== ROTA /firmar-login (login VUCEM) ==================
 app.post("/firmar-login", (req, res) => {
   try {
     // nomes que vêm do FRONTEND
@@ -96,9 +98,8 @@ app.post("/firmar-login", (req, res) => {
   }
 });
 
-
+// ================== INÍCIO DO SERVIDOR ==================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Servidor /firma ouvindo na porta " + PORT);
+  console.log("Servidor de firma ouvindo na porta " + PORT);
 });
-
