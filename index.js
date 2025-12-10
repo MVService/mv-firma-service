@@ -7,16 +7,32 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: "10mb" }));
 
-// Função utilitária: gera assinatura SHA-256 com chave privada em DER (Base64)
-function assinarDerBase64(keyB64, senha, cadenaOriginal) {
-  // keyB64 = DER em Base64 vindo do frontend
-  const keyDerBytes = forge.util.decode64(keyB64);     // bytes binários
-  const keyAsn1     = forge.asn1.fromDer(keyDerBytes); // DER → ASN.1
-  const privateKey  = forge.pki.decryptRsaPrivateKey(keyAsn1, senha);
+// ========== função utilitária: carrega chave DER+senha ==========
+function getPrivateKeyFromDerB64(keyB64, senha) {
+  // keyB64 = conteúdo do arquivo .KEY em Base64 (DER)
+  const derBytes = forge.util.decode64(keyB64);       // bytes DER
+  const asn1Encrypted = forge.asn1.fromDer(derBytes); // DER → ASN.1 (PKCS#8 encriptado)
 
-  if (!privateKey) {
+  let privateKeyInfo;
+  try {
+    // decifra PKCS#8 usando a senha
+    privateKeyInfo = forge.pki.decryptPrivateKeyInfo(asn1Encrypted, senha);
+  } catch (e) {
     throw new Error("Senha incorreta ou chave privada inválida.");
   }
+
+  if (!privateKeyInfo) {
+    throw new Error("Senha incorreta ou chave privada inválida.");
+  }
+
+  // ASN.1 (PKCS#8) → objeto chave privada RSA
+  const privateKey = forge.pki.privateKeyFromAsn1(privateKeyInfo);
+  return privateKey;
+}
+
+// ========== função utilitária: assina uma cadeia ==========
+function assinarComKeyDerB64(keyB64, senha, cadenaOriginal) {
+  const privateKey = getPrivateKeyFromDerB64(keyB64, senha);
 
   const md = forge.md.sha256.create();
   md.update(cadenaOriginal, "utf8");
@@ -38,8 +54,7 @@ app.post("/firma", (req, res) => {
       });
     }
 
-    // cerB64 ainda não é usado aqui, mas fica para futura validação
-    const firma = assinarDerBase64(keyB64, senha, cadenaOriginal);
+    const firma = assinarComKeyDerB64(keyB64, senha, cadenaOriginal);
 
     return res.json({
       ok: true,
@@ -69,12 +84,12 @@ app.post("/firmar-login", (req, res) => {
       });
     }
 
-    const cerB64         = P_CER_B64;                 // ainda não usado
+    const cerB64         = P_CER_B64;                 // ainda não usado aqui
     const keyB64         = P_KEY_B64;
     const senha          = P_SENHA;
     const cadenaOriginal = P_CADENA || "LOGIN-VUCEM";
 
-    const firma = assinarDerBase64(keyB64, senha, cadenaOriginal);
+    const firma = assinarComKeyDerB64(keyB64, senha, cadenaOriginal);
 
     return res.json({
       ok: true,
