@@ -180,14 +180,19 @@ app.post("/soap", (req, res) => {
     // 2) ou enviar url pelo Velneo em payloadObj.url
     //
     // Recomendo fixar aqui:
-    const FIXED_VUCEM_URL =
+   const FIXED_VUCEM_URL =
   "https://www.ventanillaunica.gob.mx/ventanilla/DigitalizarDocumentoService";
-    const finalUrl = targetUrl || FIXED_VUCEM_URL;
 
-    if (!finalUrl || finalUrl.includes("https://www.ventanillaunica.gob.mx/ventanilla/DigitalizarDocumentoService")) {
-      return res.status(400).json({ ok:false, error:"URL do serviço VUCEM não configurada no Node." });
-    }
+const finalUrl = targetUrl || FIXED_VUCEM_URL;
 
+if (!finalUrl) {
+  return res.status(400).json({ ok: false, error: "URL do serviço VUCEM não configurada no Node." });
+}
+
+// (opcional) bloqueia somente placeholders, se você usar placeholder
+if (finalUrl.includes("COLOQUE_AQUI")) {
+  return res.status(400).json({ ok: false, error: "URL do serviço VUCEM não configurada no Node." });
+}
     const u = new URL(finalUrl);
 
     const headers = Object.assign(
