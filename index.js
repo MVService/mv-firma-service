@@ -122,11 +122,6 @@ app.post("/firmar-login", (req, res) => {
     });
   }
 });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Servidor de firma ouvindo na porta " + PORT);
-});
 /**
  * Rota /sha1pdf
  * body: { pdfB64 }
@@ -165,3 +160,8 @@ app.post("/sha1pdf", (req, res) => {
   }
 });
 
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("Servidor de firma ouvindo na porta " + PORT);
+});
