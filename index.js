@@ -127,3 +127,41 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Servidor de firma ouvindo na porta " + PORT);
 });
+/**
+ * Rota /sha1pdf
+ * body: { pdfB64 }
+ * Retorna SHA1 HEX do binário do PDF
+ */
+app.post("/sha1pdf", (req, res) => {
+  try {
+    const { pdfB64 } = req.body;
+
+    if (!pdfB64) {
+      return res.status(400).json({
+        ok: false,
+        error: "pdfB64 não informado"
+      });
+    }
+
+    // Decodifica Base64 para binário
+    const pdfBytes = forge.util.decode64(pdfB64);
+
+    // Calcula SHA1 do BINÁRIO
+    const md = forge.md.sha1.create();
+    md.update(pdfBytes, "raw");
+    const sha1hex = md.digest().toHex();
+
+    return res.json({
+      ok: true,
+      sha1hex
+    });
+
+  } catch (e) {
+    console.error("Erro /sha1pdf:", e);
+    return res.status(500).json({
+      ok: false,
+      error: e.toString()
+    });
+  }
+});
+
