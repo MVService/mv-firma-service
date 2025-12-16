@@ -190,7 +190,7 @@ if (!finalUrl) {
 }
 
 // (opcional) bloqueia somente placeholders, se você usar placeholder
-if (finalUrl.includes("COLOQUE_AQUI")) {
+if (finalUrl.includes("https://www.ventanillaunica.gob.mx/ventanilla/DigitalizarDocumentoService")) {
   return res.status(400).json({ ok: false, error: "URL do serviço VUCEM não configurada no Node." });
 }
     const u = new URL(finalUrl);
