@@ -232,7 +232,7 @@ app.post("/soap", (req, res) => {
   } catch (e) {
     return res.status(500).json({ ok:false, error: String(e) });
   }
-});a
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
