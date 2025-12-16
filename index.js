@@ -180,10 +180,11 @@ app.post("/soap", (req, res) => {
     // 2) ou enviar url pelo Velneo em payloadObj.url
     //
     // Recomendo fixar aqui:
-    const FIXED_VUCEM_URL = "COLOQUE_AQUI_A_URL_REAL_DO_REGISTRODIGITALIZARDOCUMENTO";
+    const FIXED_VUCEM_URL =
+  "https://www.ventanillaunica.gob.mx/ventanilla/DigitalizarDocumentoService";
     const finalUrl = targetUrl || FIXED_VUCEM_URL;
 
-    if (!finalUrl || finalUrl.includes("COLOQUE_AQUI")) {
+    if (!finalUrl || finalUrl.includes("https://www.ventanillaunica.gob.mx/ventanilla/DigitalizarDocumentoService")) {
       return res.status(400).json({ ok:false, error:"URL do serviço VUCEM não configurada no Node." });
     }
 
