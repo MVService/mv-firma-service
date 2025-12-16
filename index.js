@@ -195,13 +195,13 @@ if (finalUrl.includes("https://www.ventanillaunica.gob.mx/ventanilla/Digitalizar
 }
     const u = new URL(finalUrl);
 
-    const headers = Object.assign(
-      {
-        "Content-Type": "text/xml; charset=utf-8",
-        "Content-Length": Buffer.byteLength(soapXml, "utf8")
-      },
-      extraHeaders
-    );
+const headers = Object.assign(
+  {
+    "Content-Type": "text/xml; charset=utf-8",
+    "Content-Length": Buffer.byteLength(soapXml, "utf8")
+  },
+  extraHeaders
+);
 
     const options = {
       protocol: u.protocol,
