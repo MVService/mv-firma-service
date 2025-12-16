@@ -159,7 +159,80 @@ app.post("/sha1pdf", (req, res) => {
     });
   }
 });
+const https = require("https");
+const { URL } = require("url");
 
+// POST /soap
+// body: { soapXml, headers?: {..}, url?: "https://..." }
+app.post("/soap", (req, res) => {
+  try {
+    const soapXml = (req.body && req.body.soapXml) ? String(req.body.soapXml) : "";
+    const extraHeaders = (req.body && req.body.headers && typeof req.body.headers === "object") ? req.body.headers : {};
+    const targetUrl = (req.body && req.body.url) ? String(req.body.url) : "";
+
+    if (!soapXml) {
+      return res.status(400).json({ ok:false, error:"soapXml não informado" });
+    }
+
+    // IMPORTANTE:
+    // Você pode:
+    // 1) deixar targetUrl vazio e o Node usar uma URL fixa (recomendado)
+    // 2) ou enviar url pelo Velneo em payloadObj.url
+    //
+    // Recomendo fixar aqui:
+    const FIXED_VUCEM_URL = "COLOQUE_AQUI_A_URL_REAL_DO_REGISTRODIGITALIZARDOCUMENTO";
+    const finalUrl = targetUrl || FIXED_VUCEM_URL;
+
+    if (!finalUrl || finalUrl.includes("COLOQUE_AQUI")) {
+      return res.status(400).json({ ok:false, error:"URL do serviço VUCEM não configurada no Node." });
+    }
+
+    const u = new URL(finalUrl);
+
+    const headers = Object.assign(
+      {
+        "Content-Type": "text/xml; charset=utf-8",
+        "Content-Length": Buffer.byteLength(soapXml, "utf8")
+      },
+      extraHeaders
+    );
+
+    const options = {
+      protocol: u.protocol,
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + (u.search || ""),
+      method: "POST",
+      headers
+    };
+
+    const request = https.request(options, (resp) => {
+      let data = "";
+      resp.setEncoding("utf8");
+      resp.on("data", (chunk) => (data += chunk));
+      resp.on("end", () => {
+        return res.json({
+          ok: resp.statusCode >= 200 && resp.statusCode < 300,
+          httpStatus: resp.statusCode,
+          body: data
+        });
+      });
+    });
+
+    request.on("error", (err) => {
+      return res.status(500).json({
+        ok: false,
+        error: "Erro ao POST SOAP: " + String(err)
+      });
+    });
+
+    request.write(soapXml, "utf8");
+    request.end();
+
+  } catch (e) {
+    return res.status(500).json({ ok:false, error: String(e) });
+  }
+});a
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
