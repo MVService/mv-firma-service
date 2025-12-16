@@ -5,12 +5,27 @@ const cors = require("cors");
 const forge = require("node-forge");
 const https = require("https");
 const { URL } = require("url");
+const multer = require("multer");
+
+// ---- fetch (Node 18+ tem global). Fallback p/ node-fetch se necessário.
+let fetchFn = global.fetch;
+if (!fetchFn) {
+  try {
+    // node-fetch v2 (CommonJS)
+    fetchFn = require("node-fetch");
+  } catch (e) {
+    console.error("fetch não disponível. Use Node 18+ ou instale node-fetch v2.");
+  }
+}
 
 const app = express();
 app.use(cors());
 
 // 100mb para aguentar SOAP com PDF inline em base64
 app.use(bodyParser.json({ limit: "100mb" }));
+
+// multipart/form-data (PDF etc.)
+const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } }); // ajuste se quiser
 
 /**
  * Carrega a chave privada RSA da FIEL a partir de um .KEY
@@ -92,7 +107,6 @@ app.post("/firmar-login", (req, res) => {
       });
     }
 
-    const cerB64 = P_CER_B64;
     const keyB64 = P_KEY_B64;
     const senha = P_SENHA;
     const cadenaOriginal = P_CADENA || "LOGIN-VUCEM";
@@ -118,27 +132,97 @@ app.post("/firmar-login", (req, res) => {
 });
 
 /**
- * /sha1pdf
- * body: { pdfB64 }
- * Retorna SHA1 HEX do binário do PDF (não do texto base64)
+ * /sha1pdf  (multipart)
+ * form-data: pdf=<arquivo>
+ * Retorna SHA1 HEX do binário do PDF
  */
-app.post("/sha1pdf", (req, res) => {
+app.post("/sha1pdf", upload.single("pdf"), (req, res) => {
   try {
-    const { pdfB64 } = req.body || {};
-
-    if (!pdfB64) {
-      return res.status(400).json({ ok: false, error: "pdfB64 não informado" });
+    if (!req.file) {
+      return res.status(400).json({ ok: false, error: "PDF ausente (campo 'pdf')." });
     }
 
-    const pdfBytes = forge.util.decode64(String(pdfB64));
+    // forge quer "string binária"
     const md = forge.md.sha1.create();
-    md.update(pdfBytes, "raw");
+    md.update(req.file.buffer.toString("binary"), "raw");
     const sha1hex = md.digest().toHex();
 
     return res.json({ ok: true, sha1hex });
   } catch (e) {
     console.error("Erro /sha1pdf:", e);
     return res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+/**
+ * /edocument/registro (multipart)
+ * form-data:
+ *   pdf=<arquivo>
+ *   meta=<json string>
+ *
+ * Faz: transforma PDF -> base64 e chama Velneo (API_EDOCUMENT_REGISTRO) via JSON.
+ */
+app.post("/edocument/registro", upload.single("pdf"), async (req, res) => {
+  try {
+    if (!fetchFn) {
+      return res.status(500).json({ ok: false, error: "fetch não disponível no Node. Use Node 18+ ou instale node-fetch v2." });
+    }
+
+    const meta = JSON.parse(req.body.meta || "{}");
+    if (!req.file) return res.status(400).json({ ok: false, error: "PDF ausente (campo 'pdf')." });
+
+    const pdfB64 = req.file.buffer.toString("base64");
+
+    // opcional: calcula sha1 aqui se não veio no meta
+    let sha1hex = (meta.sha1hex || "").trim();
+    if (!sha1hex) {
+      const md = forge.md.sha1.create();
+      md.update(req.file.buffer.toString("binary"), "raw");
+      sha1hex = md.digest().toHex();
+    }
+
+    const files = [
+      {
+        correoElectronico: (meta.correoElectronico || "").trim(),
+        idTipoDocumento: (meta.idTipoDocumento || "").trim(),
+        nombreDocumento: (meta.nombreDocumento || "").trim(),
+        rfcConsulta: (meta.rfcConsulta || "").trim(),
+        pdfB64,
+        sha1hex,
+        cadenaOriginal: (meta.cadenaOriginal || "").trim(),
+        firma: (meta.firma || "").trim(),
+      },
+    ];
+
+    const resp = await fetchFn("https://c8.velneo.com:17722/api2/API_EDOCUMENT_REGISTRO", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        P_WSS_USER: meta.P_WSS_USER || "",
+        P_WSS_PASS: meta.P_WSS_PASS || "",
+        P_CER_B64: meta.P_CER_B64 || "",
+        P_FILES_JSON: JSON.stringify(files),
+      }),
+    });
+
+    const text = await resp.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch (_) {}
+
+    if (!resp.ok) {
+      return res.status(502).json({
+        ok: false,
+        error: "Velneo respondió HTTP " + resp.status,
+        raw: json || text,
+      });
+    }
+
+    return res.json(json || { ok: true, raw: text });
+  } catch (e) {
+    console.error("Erro /edocument/registro:", e);
+    return res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
 
@@ -168,14 +252,14 @@ app.post("/soap", (req, res) => {
       return res.status(400).json({ ok: false, error: "URL do serviço VUCEM não configurada no Node." });
     }
 
-    // Bloqueia só placeholder (se alguém usar)
+    // Bloqueia placeholder
     if (finalUrl.includes("COLOQUE_AQUI")) {
       return res.status(400).json({ ok: false, error: "URL do serviço VUCEM não configurada no Node." });
     }
 
     const u = new URL(finalUrl);
 
-    // Não permitir que o caller sobrescreva Content-Length (dá problema fácil)
+    // Não permitir que o caller sobrescreva Content-Length
     const safeExtraHeaders = { ...extraHeaders };
     delete safeExtraHeaders["Content-Length"];
     delete safeExtraHeaders["content-length"];
@@ -210,7 +294,6 @@ app.post("/soap", (req, res) => {
       });
     });
 
-    // Timeout para não travar a requisição indefinidamente
     request.setTimeout(60000, () => {
       request.destroy(new Error("Timeout SOAP (60s)"));
     });
