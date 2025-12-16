@@ -1,4 +1,7 @@
 // index.js
+// Node service: assinatura (/firma), sha1 pdf multipart (/sha1pdf),
+// registro eDocument via Velneo (/edocument/registro), proxy SOAP (/soap)
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -7,11 +10,10 @@ const https = require("https");
 const { URL } = require("url");
 const multer = require("multer");
 
-// ---- fetch (Node 18+ tem global). Fallback p/ node-fetch se necessário.
+// ---- fetch (Node 18+ tem global). Fallback p/ node-fetch v2 (CommonJS).
 let fetchFn = global.fetch;
 if (!fetchFn) {
   try {
-    // node-fetch v2 (CommonJS)
     fetchFn = require("node-fetch");
   } catch (e) {
     console.error("fetch não disponível. Use Node 18+ ou instale node-fetch v2.");
@@ -52,7 +54,7 @@ function loadRsaPrivateKeyFromSatKeyB64(keyB64, password) {
  */
 function signCadena(privateKey, cadenaOriginal) {
   const md = forge.md.sha256.create();
-  md.update(cadenaOriginal, "utf8");
+  md.update(String(cadenaOriginal), "utf8");
   const signatureBytes = privateKey.sign(md);
   return forge.util.encode64(signatureBytes);
 }
@@ -60,6 +62,7 @@ function signCadena(privateKey, cadenaOriginal) {
 /**
  * /firma
  * body: { cerB64, keyB64, senha, cadenaOriginal }
+ * OBS: cerB64 é validado por consistência, mas não é usado para assinar.
  */
 app.post("/firma", (req, res) => {
   try {
@@ -80,9 +83,8 @@ app.post("/firma", (req, res) => {
       });
     }
 
-    const firma = signCadena(privateKey, String(cadenaOriginal));
-
-    return res.json({ ok: true, firma, cadenaOriginal });
+    const firma = signCadena(privateKey, cadenaOriginal);
+    return res.json({ ok: true, firma, cadenaOriginal: String(cadenaOriginal) });
   } catch (err) {
     console.error("Erro /firma:", err);
     return res.status(500).json({
@@ -119,9 +121,8 @@ app.post("/firmar-login", (req, res) => {
       });
     }
 
-    const firma = signCadena(privateKey, String(cadenaOriginal));
-
-    return res.json({ ok: true, firma, cadenaOriginal });
+    const firma = signCadena(privateKey, cadenaOriginal);
+    return res.json({ ok: true, firma, cadenaOriginal: String(cadenaOriginal) });
   } catch (err) {
     console.error("Erro /firmar-login:", err);
     return res.status(500).json({
@@ -132,7 +133,7 @@ app.post("/firmar-login", (req, res) => {
 });
 
 /**
- * /sha1pdf  (multipart)
+ * /sha1pdf (multipart)
  * form-data: pdf=<arquivo>
  * Retorna SHA1 HEX do binário do PDF
  */
@@ -142,7 +143,6 @@ app.post("/sha1pdf", upload.single("pdf"), (req, res) => {
       return res.status(400).json({ ok: false, error: "PDF ausente (campo 'pdf')." });
     }
 
-    // forge quer "string binária"
     const md = forge.md.sha1.create();
     md.update(req.file.buffer.toString("binary"), "raw");
     const sha1hex = md.digest().toHex();
@@ -165,34 +165,46 @@ app.post("/sha1pdf", upload.single("pdf"), (req, res) => {
 app.post("/edocument/registro", upload.single("pdf"), async (req, res) => {
   try {
     if (!fetchFn) {
-      return res.status(500).json({ ok: false, error: "fetch não disponível no Node. Use Node 18+ ou instale node-fetch v2." });
+      return res.status(500).json({
+        ok: false,
+        error: "fetch não disponível no Node. Use Node 18+ ou instale node-fetch v2.",
+      });
     }
 
     const meta = JSON.parse(req.body.meta || "{}");
-    if (!req.file) return res.status(400).json({ ok: false, error: "PDF ausente (campo 'pdf')." });
+
+    if (!req.file) {
+      return res.status(400).json({ ok: false, error: "PDF ausente (campo 'pdf')." });
+    }
 
     const pdfB64 = req.file.buffer.toString("base64");
 
     // opcional: calcula sha1 aqui se não veio no meta
-    let sha1hex = (meta.sha1hex || "").trim();
+    let sha1hex = String(meta.sha1hex || "").trim();
     if (!sha1hex) {
       const md = forge.md.sha1.create();
       md.update(req.file.buffer.toString("binary"), "raw");
       sha1hex = md.digest().toHex();
     }
 
-    const files = [
-      {
-        correoElectronico: (meta.correoElectronico || "").trim(),
-        idTipoDocumento: (meta.idTipoDocumento || "").trim(),
-        nombreDocumento: (meta.nombreDocumento || "").trim(),
-        rfcConsulta: (meta.rfcConsulta || "").trim(),
-        pdfB64,
-        sha1hex,
-        cadenaOriginal: (meta.cadenaOriginal || "").trim(),
-        firma: (meta.firma || "").trim(),
-      },
-    ];
+    const fileItem = {
+      correoElectronico: String(meta.correoElectronico || "").trim(),
+      idTipoDocumento: String(meta.idTipoDocumento || "").trim(),
+      nombreDocumento: String(meta.nombreDocumento || "").trim(),
+      rfcConsulta: String(meta.rfcConsulta || "").trim(),
+      pdfB64,
+      sha1hex,
+      cadenaOriginal: String(meta.cadenaOriginal || "").trim(),
+      firma: String(meta.firma || "").trim(),
+    };
+
+    // valida meta mínimo antes de chamar Velneo
+    if (!fileItem.correoElectronico || !fileItem.idTipoDocumento || !fileItem.nombreDocumento) {
+      return res.status(400).json({
+        ok: false,
+        error: "meta incompleto: correoElectronico, idTipoDocumento, nombreDocumento são obrigatórios.",
+      });
+    }
 
     const resp = await fetchFn("https://c8.velneo.com:17722/api2/API_EDOCUMENT_REGISTRO", {
       method: "POST",
@@ -201,7 +213,7 @@ app.post("/edocument/registro", upload.single("pdf"), async (req, res) => {
         P_WSS_USER: meta.P_WSS_USER || "",
         P_WSS_PASS: meta.P_WSS_PASS || "",
         P_CER_B64: meta.P_CER_B64 || "",
-        P_FILES_JSON: JSON.stringify(files),
+        P_FILES_JSON: JSON.stringify([fileItem]),
       }),
     });
 
@@ -242,22 +254,19 @@ app.post("/soap", (req, res) => {
       return res.status(400).json({ ok: false, error: "soapXml não informado" });
     }
 
-    // URL real do serviço (endpoint), NÃO o ?wsdl
-    const FIXED_VUCEM_URL =
-      "https://www.ventanillaunica.gob.mx/ventanilla/DigitalizarDocumentoService";
-
+    // default (se não passar url)
+    const FIXED_VUCEM_URL = "https://www.ventanillaunica.gob.mx/ventanilla/DigitalizarDocumentoService";
     const finalUrl = targetUrl || FIXED_VUCEM_URL;
 
-    if (!finalUrl) {
-      return res.status(400).json({ ok: false, error: "URL do serviço VUCEM não configurada no Node." });
-    }
-
-    // Bloqueia placeholder
-    if (finalUrl.includes("COLOQUE_AQUI")) {
+    if (!finalUrl || finalUrl.includes("COLOQUE_AQUI")) {
       return res.status(400).json({ ok: false, error: "URL do serviço VUCEM não configurada no Node." });
     }
 
     const u = new URL(finalUrl);
+
+    if (u.protocol !== "https:") {
+      return res.status(400).json({ ok: false, error: "Somente HTTPS é permitido em /soap." });
+    }
 
     // Não permitir que o caller sobrescreva Content-Length
     const safeExtraHeaders = { ...extraHeaders };
@@ -275,7 +284,7 @@ app.post("/soap", (req, res) => {
     const options = {
       protocol: u.protocol,
       hostname: u.hostname,
-      port: u.port || 443,
+      port: u.port ? Number(u.port) : 443,
       path: u.pathname + (u.search || ""),
       method: "POST",
       headers,
