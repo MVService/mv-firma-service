@@ -1,6 +1,5 @@
 // index.js
-// Node service: assinatura (/firma), sha1 pdf multipart (/sha1pdf),
-// registro eDocument via Velneo (/edocument/registro), proxy SOAP (/soap)
+// Node service: assinatura (/firma), sha1 pdf (multipart OU JSON), registro eDocument (/edocument/registro), proxy SOAP (/soap)
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -9,7 +8,6 @@ const forge = require("node-forge");
 const https = require("https");
 const { URL } = require("url");
 const multer = require("multer");
-const crypto = require("crypto");
 
 // ---- fetch (Node 18+ tem global). Fallback p/ node-fetch v2 (CommonJS).
 let fetchFn = global.fetch;
@@ -28,75 +26,37 @@ app.use(cors());
 app.use(bodyParser.json({ limit: "100mb" }));
 
 // multipart/form-data (PDF etc.)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // ajuste se quiser
-});
-const SaxonJS = require("saxon-js");
-const fs = require("fs");
-const path = require("path");
+const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } }); // ajuste se quiser
 
 /**
- * /cadena-mv
- * body: { xml: "<...>", xsltBase64?: "..." }
- *
- * - Se você mandar xsltBase64, ele usa isso (útil para testar).
- * - Se não mandar, ele carrega um arquivo local: ./xslt/mv2025_cadenaoriginal.xslt
- *
- * Retorna: { ok:true, cadenaOriginal:"..." }
+ * Utils: SHA1 HEX do binário
  */
-app.post("/cadena-mv", async (req, res) => {
-  try {
-    const xml = String((req.body && req.body.xml) || "").trim();
-    const xsltBase64 = (req.body && req.body.xsltBase64) ? String(req.body.xsltBase64) : "";
+function sha1HexFromBuffer(buf) {
+  const md = forge.md.sha1.create();
+  // forge precisa de "binary string"
+  md.update(Buffer.from(buf).toString("binary"), "raw");
+  return md.digest().toHex(); // lowercase hex
+}
 
-    if (!xml) {
-      return res.status(400).json({ ok: false, error: "xml não informado" });
-    }
-
-    let xsltText = "";
-    if (xsltBase64) {
-      xsltText = Buffer.from(xsltBase64, "base64").toString("utf8");
-    } else {
-      // Caminho padrão (você coloca aqui o XSLT OFICIAL da MV 2025)
-      const xsltPath = path.join(__dirname, "xslt", "mv2025_cadenaoriginal.xslt");
-      if (!fs.existsSync(xsltPath)) {
-        return res.status(500).json({
-          ok: false,
-          error:
-            "XSLT oficial não encontrado em ./xslt/mv2025_cadenaoriginal.xslt. Coloque o XSLT oficial da MV 2025 nesse caminho.",
-        });
-      }
-      xsltText = fs.readFileSync(xsltPath, "utf8");
-    }
-
-    // SaxonJS transforma XSLT -> SEF na hora (modo dinâmico)
-    const result = await SaxonJS.transform(
-      {
-        stylesheetText: xsltText,
-        sourceText: xml,
-        destination: "serialized",
-      },
-      "async"
-    );
-
-    const cadenaOriginal = String(result.principalResult || "")
-      .replace(/\r\n/g, "\n")
-      .trim();
-
-    if (!cadenaOriginal) {
-      return res.status(502).json({
-        ok: false,
-        error: "Transformação XSLT retornou cadena vazia (verifique o XSLT e o XML).",
-      });
-    }
-
-    return res.json({ ok: true, cadenaOriginal });
-  } catch (e) {
-    console.error("Erro /cadena-mv:", e);
-    return res.status(500).json({ ok: false, error: String(e.message || e) });
+function normalizePdfB64(input) {
+  let s = String(input || "").trim();
+  if (!s) return "";
+  // aceita data URL
+  if (s.startsWith("data:")) {
+    const idx = s.indexOf("base64,");
+    if (idx >= 0) s = s.slice(idx + "base64,".length);
   }
-});
+  // remove quebras de linha (alguns base64 vêm com \n)
+  s = s.replace(/\s+/g, "");
+  return s;
+}
+
+function bufferFromPdfB64(pdfB64) {
+  const clean = normalizePdfB64(pdfB64);
+  if (!clean) return null;
+  return Buffer.from(clean, "base64");
+}
+
 /**
  * Carrega a chave privada RSA da FIEL a partir de um .KEY
  * enviado em Base64 (PKCS#8 DER encriptado).
@@ -201,22 +161,37 @@ app.post("/firmar-login", (req, res) => {
 });
 
 /**
- * /sha1pdf (multipart)  ✅ CONTRATO OFICIAL
- * form-data: pdf=<arquivo>
- * Retorna SHA1 HEX do binário do PDF (sem conversão textual/base64)
+ * /sha1pdf
+ * Aceita:
+ *  A) multipart/form-data: pdf=<arquivo>
+ *  B) JSON: { pdfB64: "...." } (aceita também data:application/pdf;base64,...)
+ *
+ * Retorna SHA1 HEX do binário do PDF
  */
 app.post("/sha1pdf", upload.single("pdf"), (req, res) => {
   try {
-    const f = req.file;
-    if (!f || !f.buffer || !f.buffer.length) {
-      return res.status(400).json({ ok: false, error: "PDF ausente (campo 'pdf')." });
+    // Caso A: multipart
+    if (req.file && req.file.buffer && req.file.buffer.length) {
+      const sha1hex = sha1HexFromBuffer(req.file.buffer);
+      return res.json({ ok: true, sha1hex, mode: "multipart" });
     }
 
-    const sha1hex = crypto.createHash("sha1").update(f.buffer).digest("hex");
-    return res.json({ ok: true, sha1hex });
+    // Caso B: JSON
+    const pdfB64 = req.body && (req.body.pdfB64 || req.body.PDF_B64 || req.body.pdf_base64);
+    const buf = bufferFromPdfB64(pdfB64);
+    if (buf && buf.length) {
+      const sha1hex = sha1HexFromBuffer(buf);
+      return res.json({ ok: true, sha1hex, mode: "json" });
+    }
+
+    return res.status(400).json({
+      ok: false,
+      error:
+        "PDF ausente. Envie multipart/form-data com campo 'pdf' OU JSON { pdfB64 }.",
+    });
   } catch (e) {
     console.error("Erro /sha1pdf:", e);
-    return res.status(500).json({ ok: false, error: String(e.message || e) });
+    return res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
@@ -245,11 +220,8 @@ app.post("/edocument/registro", upload.single("pdf"), async (req, res) => {
 
     const pdfB64 = req.file.buffer.toString("base64");
 
-    // opcional: calcula sha1 aqui se não veio no meta
-    let sha1hex = String(meta.sha1hex || "").trim();
-    if (!sha1hex) {
-      sha1hex = crypto.createHash("sha1").update(req.file.buffer).digest("hex");
-    }
+    // calcula sha1 (sempre do binário do PDF)
+    const sha1hex = sha1HexFromBuffer(req.file.buffer);
 
     const fileItem = {
       correoElectronico: String(meta.correoElectronico || "").trim(),
@@ -381,7 +353,7 @@ app.post("/soap", (req, res) => {
     request.write(soapXml, "utf8");
     request.end();
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e.message || e) });
+    return res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
