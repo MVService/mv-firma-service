@@ -9,6 +9,7 @@ const forge = require("node-forge");
 const https = require("https");
 const { URL } = require("url");
 const multer = require("multer");
+const crypto = require("crypto");
 
 // ---- fetch (Node 18+ tem global). Fallback p/ node-fetch v2 (CommonJS).
 let fetchFn = global.fetch;
@@ -27,7 +28,10 @@ app.use(cors());
 app.use(bodyParser.json({ limit: "100mb" }));
 
 // multipart/form-data (PDF etc.)
-const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } }); // ajuste se quiser
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // ajuste se quiser
+});
 
 /**
  * Carrega a chave privada RSA da FIEL a partir de um .KEY
@@ -133,24 +137,22 @@ app.post("/firmar-login", (req, res) => {
 });
 
 /**
- * /sha1pdf (multipart)
+ * /sha1pdf (multipart)  ✅ CONTRATO OFICIAL
  * form-data: pdf=<arquivo>
- * Retorna SHA1 HEX do binário do PDF
+ * Retorna SHA1 HEX do binário do PDF (sem conversão textual/base64)
  */
 app.post("/sha1pdf", upload.single("pdf"), (req, res) => {
   try {
-    if (!req.file) {
+    const f = req.file;
+    if (!f || !f.buffer || !f.buffer.length) {
       return res.status(400).json({ ok: false, error: "PDF ausente (campo 'pdf')." });
     }
 
-    const md = forge.md.sha1.create();
-    md.update(req.file.buffer.toString("binary"), "raw");
-    const sha1hex = md.digest().toHex();
-
+    const sha1hex = crypto.createHash("sha1").update(f.buffer).digest("hex");
     return res.json({ ok: true, sha1hex });
   } catch (e) {
     console.error("Erro /sha1pdf:", e);
-    return res.status(500).json({ ok: false, error: String(e) });
+    return res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
 
@@ -182,9 +184,7 @@ app.post("/edocument/registro", upload.single("pdf"), async (req, res) => {
     // opcional: calcula sha1 aqui se não veio no meta
     let sha1hex = String(meta.sha1hex || "").trim();
     if (!sha1hex) {
-      const md = forge.md.sha1.create();
-      md.update(req.file.buffer.toString("binary"), "raw");
-      sha1hex = md.digest().toHex();
+      sha1hex = crypto.createHash("sha1").update(req.file.buffer).digest("hex");
     }
 
     const fileItem = {
@@ -317,7 +317,7 @@ app.post("/soap", (req, res) => {
     request.write(soapXml, "utf8");
     request.end();
   } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e) });
+    return res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
 
