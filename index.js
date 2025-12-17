@@ -32,7 +32,71 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }, // ajuste se quiser
 });
+const SaxonJS = require("saxon-js");
+const fs = require("fs");
+const path = require("path");
 
+/**
+ * /cadena-mv
+ * body: { xml: "<...>", xsltBase64?: "..." }
+ *
+ * - Se você mandar xsltBase64, ele usa isso (útil para testar).
+ * - Se não mandar, ele carrega um arquivo local: ./xslt/mv2025_cadenaoriginal.xslt
+ *
+ * Retorna: { ok:true, cadenaOriginal:"..." }
+ */
+app.post("/cadena-mv", async (req, res) => {
+  try {
+    const xml = String((req.body && req.body.xml) || "").trim();
+    const xsltBase64 = (req.body && req.body.xsltBase64) ? String(req.body.xsltBase64) : "";
+
+    if (!xml) {
+      return res.status(400).json({ ok: false, error: "xml não informado" });
+    }
+
+    let xsltText = "";
+    if (xsltBase64) {
+      xsltText = Buffer.from(xsltBase64, "base64").toString("utf8");
+    } else {
+      // Caminho padrão (você coloca aqui o XSLT OFICIAL da MV 2025)
+      const xsltPath = path.join(__dirname, "xslt", "mv2025_cadenaoriginal.xslt");
+      if (!fs.existsSync(xsltPath)) {
+        return res.status(500).json({
+          ok: false,
+          error:
+            "XSLT oficial não encontrado em ./xslt/mv2025_cadenaoriginal.xslt. Coloque o XSLT oficial da MV 2025 nesse caminho.",
+        });
+      }
+      xsltText = fs.readFileSync(xsltPath, "utf8");
+    }
+
+    // SaxonJS transforma XSLT -> SEF na hora (modo dinâmico)
+    const result = await SaxonJS.transform(
+      {
+        stylesheetText: xsltText,
+        sourceText: xml,
+        destination: "serialized",
+      },
+      "async"
+    );
+
+    const cadenaOriginal = String(result.principalResult || "")
+      .replace(/\r\n/g, "\n")
+      .trim();
+
+    if (!cadenaOriginal) {
+      return res.status(502).json({
+        ok: false,
+        error: "Transformação XSLT retornou cadena vazia (verifique o XSLT e o XML).",
+      });
+    }
+
+    return res.json({ ok: true, cadenaOriginal });
+  } catch (e) {
+    console.error("Erro /cadena-mv:", e);
+    return res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
 /**
  * Carrega a chave privada RSA da FIEL a partir de um .KEY
  * enviado em Base64 (PKCS#8 DER encriptado).
