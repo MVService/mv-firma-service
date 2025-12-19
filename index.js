@@ -47,6 +47,9 @@ app.use(cors());
 // 100mb para aguentar SOAP com PDF inline em base64
 app.use(bodyParser.json({ limit: "100mb" }));
 
+app.get("/health", (req, res) => {
+  res.json({ ok: true, service: "mv-firma-service", ts: Date.now() });
+});
 // multipart/form-data (PDF etc.)
 const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } }); // ajuste se quiser
 
