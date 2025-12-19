@@ -48,8 +48,25 @@ app.use(cors());
 app.use(bodyParser.json({ limit: "100mb" }));
 
 app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "mv-firma-service", ts: Date.now() });
+  res.json({
+    ok: true,
+    service: "mv-firma-service",
+    ts: Date.now(),
+    commit: process.env.RENDER_GIT_COMMIT || "",
+  });
 });
+
+app.get("/routes", (req, res) => {
+  const routes = [];
+  app._router.stack.forEach((m) => {
+    if (m.route && m.route.path) {
+      const methods = Object.keys(m.route.methods || {}).join(",").toUpperCase();
+      routes.push(`${methods} ${m.route.path}`);
+    }
+  });
+  res.json({ ok: true, routes });
+});
+
 // multipart/form-data (PDF etc.)
 const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } }); // ajuste se quiser
 
