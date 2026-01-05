@@ -220,8 +220,8 @@ function postSoapToUrl(finalUrl, soapXml, extraHeaders) {
         });
       });
 
-      request.setTimeout(60000, () => {
-        request.destroy(new Error("Timeout SOAP (60s)"));
+      request.setTimeout(180000, () => {
+        request.destroy(new Error("Timeout SOAP (180s)"));
       });
 
       request.on("error", (err) => {
