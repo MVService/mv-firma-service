@@ -225,6 +225,7 @@ function postSoapToUrl(finalUrl, soapXml, extraHeaders) {
       });
 
       request.on("error", (err) => {
+        console.log("[SOAP ERROR]", err && err.code, String(err));
         resolve({ ok: false, httpStatus: 0, body: "", error: String(err) });
       });
 
