@@ -254,7 +254,10 @@ const DEFAULT_EDOC_URL =
  */
 app.post("/firma", (req, res) => {
   try {
-    const { cerB64, keyB64, senha, cadenaOriginal } = req.body || {};
+    const cerB64 = req.body?.cerB64 || req.body?.certBase64;
+    const keyB64 = req.body?.keyB64 || req.body?.keyBase64;
+    const senha  = req.body?.senha  || req.body?.password;
+    const cadenaOriginal = req.body?.cadenaOriginal || req.body?.cadena;
 
     if (!cerB64 || !keyB64 || !senha || !cadenaOriginal) {
       return res.status(400).json({
@@ -274,11 +277,7 @@ app.post("/firma", (req, res) => {
     const firma = signCadena(privateKey, cadenaOriginal);
     return res.json({ ok: true, firma, cadenaOriginal: String(cadenaOriginal) });
   } catch (err) {
-    console.error("Erro /firma:", err);
-    return res.status(500).json({
-      ok: false,
-      error: "Erro interno ao gerar firma: " + String(err),
-    });
+    return res.status(500).json({ ok: false, error: "Erro interno ao gerar firma: " + String(err) });
   }
 });
 
